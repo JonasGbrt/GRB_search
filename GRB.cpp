@@ -11,12 +11,19 @@
 using namespace std;
 
 TFile* PULL(double pull_max=8,TString filename="~/Desktop/Uni/Master/Astrophysics_Lab_I/Automne/scrate.root"){
+    
+//Useful constant for the Program-----------------------------------------
     const double bin_size=1.0;//search bin size seconds
     const int jump=5; //jump in bins before and after for doing mean
     const int MeanWidth=25; // nbr of bins to do the mean estimation
     const int TShift=100000; // Time window in bins
     const double Time_GRB = 1488809240;
+    
+//File opening/creation---------------------------------------------------
     TFile * input= new TFile(filename,"READ");
+    TFile *output = new TFile("out.root","RECREATE");
+    
+//Creation of alias for TTree Branches------------------------------------
     TTree * tree=(TTree*)input->Get("f1rate");
     double unix_time;
     tree->SetBranchAddress("unix_time",&unix_time);
@@ -24,32 +31,43 @@ TFile* PULL(double pull_max=8,TString filename="~/Desktop/Uni/Master/Astrophysic
     tree->SetBranchAddress("rate", rate);
     double rate_err[14];
     tree->SetBranchAddress("rate_err", rate_err);
-    TFile *output = new TFile("out.root","RECREATE");
+    float fe_cosmic;
+    tree->SetBranchAddress("fe_cosmic", &fe_cosmic);
     
     
+//Creation of the histogram-----------------------------------------------
     
     TProfile *h = new TProfile("h","hist with right error", TShift/bin_size,-TShift/2,TShift/2);
     TH1D *h1 = new TH1D("h1","hist of the mean", TShift/bin_size,-TShift/2,TShift/2);
     TH1D *h2 = new TH1D("h2","hist data-mean", TShift/bin_size,-TShift/2,TShift/2);
     TH1D *h3 = new TH1D("h3","hist pull", TShift/bin_size,-TShift/2,TShift/2);
     TH1D *e = new TH1D("e","hist of the rate_err^2", TShift/bin_size,-TShift/2,TShift/2);
+    TH1D *fe = new TH1D("fe","hist of fe_cosmic", TShift/bin_size,-TShift/2,TShift/2);
     TH1D *p = new TH1D("p","hist of pull values", 100,-10,40);
+    
     
     const Long64_t first_entry=33000000;
     const Long64_t last_entry=34000000;//tree->GetEntries()
 
+//Filling h profile histogram and e/fe histogram--------------------------
+    
     for (Long64_t i=first_entry; i<last_entry; i++){
         tree->GetEntry(i);
         h->Fill(unix_time-Time_GRB, rate[13]);
         e->Fill(unix_time-Time_GRB, rate_err[13]*rate_err[13]);
+        fe->Fill(unix_time-Time_GRB, fe_cosmic);
     }
+    
+//Setting e/fe value if there is bins in h--------------------------------
     for (int i=0 ;i<h->GetNbinsX();i++){
         int n_entry=h->GetBinEntries(i+1);
         if (n_entry!=0){
             e->SetBinContent(i+1,sqrt(e->GetArray()[i+1])/n_entry);
+            fe->SetBinContent(i+1,fe->GetArray()[i+1]/n_entry);
         }
     }
-    
+
+//Calculation of the bins expected value----------------------------------
     double* mean=new double[3];
     double* t=new double[3];
     double timecheck=0;
@@ -57,26 +75,30 @@ TFile* PULL(double pull_max=8,TString filename="~/Desktop/Uni/Master/Astrophysic
     double a,b,slope,val,pull;
     int na,nb;
     bool in_a_grb=false;
+    
     for (int j=jump+MeanWidth;j<h->GetNbinsX()-jump-MeanWidth;j++){
         if (h->GetBinEntries(j)!=0){
             a =0;
             b =0;
             na=0;
             nb=0;
+            
             for(int i=0;i<MeanWidth;i++){
+                if (fe->GetArray()[j-jump-i+1]<2500) continue;
                 if (h->GetBinEntries(j+jump+i+1)!=0){
                     a+=h->GetBinContent(j+jump+i+1);
                     na++;
                 }
             }
             for(int i=0;i<MeanWidth;i++){
+                if (fe->GetArray()[j-jump-i+1]<2500) continue;
                 if (h->GetBinEntries(j-jump-i+1)!=0){
                     b+=h->GetBinContent(j-jump-i+1);
                     nb++;
                 }
             }
             if (na<10) continue;
-            if (nb<5) continue;
+            if (nb<10) continue;
             if (na!=0){
                 mean[0]=a/na;
             }
@@ -108,7 +130,9 @@ TFile* PULL(double pull_max=8,TString filename="~/Desktop/Uni/Master/Astrophysic
             }
             else{
                 if (in_a_grb){
+                    if (t[1]-timecheck!=0) {
                     cout<<"anomaly at unix time: "<< timecheck << " duration "<<t[1]-timecheck<<" tot pull "<<tot_pull<< endl;
+                    }
                     tot_pull=0;
                     in_a_grb=false;
                 }
@@ -116,7 +140,9 @@ TFile* PULL(double pull_max=8,TString filename="~/Desktop/Uni/Master/Astrophysic
         }
         else{
             if (in_a_grb){
+                if (t[1]-timecheck!=0) {
                 cout<<"anomaly at unix time: "<< timecheck << " duration "<<t[1]-timecheck<<" tot pull "<<tot_pull<< endl;
+                }
                 tot_pull=0;
                 in_a_grb=false;
                 
@@ -133,7 +159,7 @@ TFile* PULL(double pull_max=8,TString filename="~/Desktop/Uni/Master/Astrophysic
     h1->Write();
     h2->Write();
     h3->Write();
-    //c1->Write();
+    fe->Write();
     return output;
 }
 
@@ -143,7 +169,7 @@ int main(){
     TFile* f=PULL();
     
     
-    TCanvas *c1 = new TCanvas("c1","Histogram Drawing Options",200,10,700,1200);
+    TCanvas *c1 = new TCanvas("c1","Test with fe<2500 and nbr mean 10 ",200,10,700,1200);
     TPad *pad1 = new TPad("pad1","The pad with the function",0.1,0.75,0.9,1);
     TPad *pad2 = new TPad("pad2","The pad with the histogram",0.1,0.5,0.9,0.75);
     TPad *pad3 = new TPad("pad3","The pad with the histogram",0.1,0.25,0.9,0.5);
@@ -163,7 +189,13 @@ int main(){
     h1->GetXaxis()->SetRangeUser(-(TShift/2-jump-MeanWidth-1), TShift/2-jump-MeanWidth);
     h2->GetXaxis()->SetRangeUser(-(TShift/2-jump-MeanWidth-1), TShift/2-jump-MeanWidth);
     h3->GetXaxis()->SetRangeUser(-(TShift/2-jump-MeanWidth-1), TShift/2-jump-MeanWidth);
+    h->GetYaxis()->SetRangeUser(-(TShift/2-jump-MeanWidth-1), TShift/2-jump-MeanWidth);
+    h1->GetYaxis()->SetRangeUser(-(TShift/2-jump-MeanWidth-1), TShift/2-jump-MeanWidth);
+    h2->GetYaxis()->SetRangeUser(-(TShift/2-jump-MeanWidth-1), TShift/2-jump-MeanWidth);
+    h3->GetYaxis()->SetRangeUser(-(TShift/2-jump-MeanWidth-1), TShift/2-jump-MeanWidth);
      */
+    h2->GetYaxis()->SetRangeUser(-1500, 4000);
+    h3->GetYaxis()->SetRangeUser(-20, 40);
     pad1->cd();
     h->Draw();
     pad2->cd();
@@ -186,3 +218,6 @@ cout<<"Hello"<<endl;
  
  
  */
+
+
+//Look for fi lower than 2000
